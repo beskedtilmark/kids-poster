@@ -6,16 +6,15 @@ import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "crypto";
 import { toFile } from "openai/uploads";
 
-// --- Configure runtimes (Next.js) ---
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// --- Init OpenAI client ---
+// --- OpenAI client ---
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// --- Init Supabase (server-side, using service role) ---
+// --- Supabase (server-side, service role key) ---
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 const bucket = process.env.SUPABASE_BUCKET || "kids-posters";
@@ -23,7 +22,6 @@ const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
 
 export async function POST(req: Request) {
   try {
-    // Basic env sanity checks
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json(
         { error: "Missing OPENAI_API_KEY in .env.local" },
@@ -32,12 +30,12 @@ export async function POST(req: Request) {
     }
     if (!supabaseUrl || !supabaseServiceRoleKey) {
       return NextResponse.json(
-        { error: "Missing Supabase env vars (url or service role key)" },
+        { error: "Missing Supabase env vars (URL or service role key)" },
         { status: 500 }
       );
     }
 
-    // 1) Read multipart/form-data from the client
+    // 1) Read multipart form
     const form = await req.formData();
     const file = form.get("image") as Blob | null;
     const style = (form.get("style") as string) || "Cut-out modern poster";
@@ -47,11 +45,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No image uploaded" }, { status: 400 });
     }
 
-    // 2) Convert Blob to File for OpenAI SDK
+    // 2) Convert Blob -> File for OpenAI
     const buffer = Buffer.from(await file.arrayBuffer());
     const imgFile = await toFile(buffer, "input.png", { type: "image/png" });
 
-    // 3) Build the prompt and call OpenAI Images *edit* API
+    // 3) OpenAI Images (use supported square size)
     const prompt = `
       Transform this original children's drawing into a modern, living-room poster.
       Keep the original shapes, composition, and linework faithful to the source.
@@ -59,7 +57,6 @@ export async function POST(req: Request) {
       Harmonize colors around accent ${accent}. No new characters or objects. No text.
     `;
 
-    // Use a supported square size. (1024x1024 is safe.)
     const result = await openai.images.edit({
       model: "gpt-image-1",
       image: imgFile,
@@ -82,10 +79,7 @@ export async function POST(req: Request) {
     const { error: uploadError } = await supabase
       .storage
       .from(bucket)
-      .upload(key, outBuffer, {
-        contentType: "image/png",
-        upsert: true,
-      });
+      .upload(key, outBuffer, { contentType: "image/png", upsert: true });
 
     if (uploadError) {
       return NextResponse.json(
@@ -94,10 +88,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // 5) Get a public URL for the uploaded poster
+    // 5) Public URL
     const { data: pub } = supabase.storage.from(bucket).getPublicUrl(key);
     const posterUrl = pub?.publicUrl;
-
     if (!posterUrl) {
       return NextResponse.json(
         { error: "Could not get public URL from Supabase" },
@@ -106,14 +99,10 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ posterUrl });
-  } catch (err: any) {
-    // Try to extract a helpful error message
+  } catch (err: unknown) {
     const msg =
-      err?.response?.data?.error?.message ||
-      err?.error?.message ||
-      err?.message ||
-      String(err);
-
+      (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ||
+      (err instanceof Error ? err.message : String(err));
     console.error("API /api/generate error:", msg);
     return NextResponse.json({ error: msg }, { status: 500 });
   }

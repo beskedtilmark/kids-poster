@@ -4,6 +4,11 @@ import React, { useCallback, useState } from "react";
 
 type StyleOption = "Matisse-esque" | "Bauhaus" | "Mid-century" | "Minimalist";
 
+type GenerateResponse = {
+  posterUrl?: string;
+  error?: string;
+};
+
 export default function KidsPosterMVP() {
   const [file, setFile] = useState<File | null>(null);
   const [style, setStyle] = useState<StyleOption>("Matisse-esque");
@@ -13,7 +18,6 @@ export default function KidsPosterMVP() {
   const [loading, setLoading] = useState<boolean>(false);
   const [message, setMessage] = useState<string>("");
 
-  // --- helpers ---
   const pickFile = useCallback((f?: File | null) => {
     if (!f) return;
     if (!f.type?.startsWith("image/")) {
@@ -31,8 +35,8 @@ export default function KidsPosterMVP() {
 
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
-    const f = e.dataTransfer.files?.[0];
-    pickFile(f || null);
+    const f = e.dataTransfer.files?.[0] ?? null;
+    pickFile(f);
   }
 
   function downloadPoster() {
@@ -45,7 +49,6 @@ export default function KidsPosterMVP() {
     a.remove();
   }
 
-  // --- main action ---
   async function handleGenerate() {
     if (!file) {
       setMessage("Select an image first.");
@@ -63,29 +66,32 @@ export default function KidsPosterMVP() {
 
       const res = await fetch("/api/generate", { method: "POST", body });
 
-      // try to read JSON either way to surface server errors
-      let data: any = {};
-      try { data = await res.json(); } catch {}
+      let data: unknown = {};
+      try {
+        data = await res.json();
+      } catch {
+        // ignore JSON parse errors
+      }
+      const parsed = data as GenerateResponse;
 
       if (!res.ok) {
-        throw new Error(data?.error || `Server error ${res.status}`);
+        throw new Error(parsed?.error || `Server error ${res.status}`);
       }
-      if (!data?.posterUrl) {
+      if (!parsed?.posterUrl) {
         throw new Error("No posterUrl in response");
       }
 
-      setPosterUrl(data.posterUrl);
+      setPosterUrl(parsed.posterUrl);
       setMessage("Done! Poster generated.");
-    } catch (err: any) {
-      const msg = err?.message || String(err);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       setMessage("Generation failed: " + msg);
-      console.error("Generate error:", err);
+      console.error("Generate error:", msg);
     } finally {
       setLoading(false);
     }
   }
 
-  // --- UI ---
   return (
     <div
       style={{
@@ -100,7 +106,12 @@ export default function KidsPosterMVP() {
         Kids Art → Living-Room Poster (Debug)
       </h1>
 
-      <div style={{ marginBottom: 14, color: message.startsWith("Generation failed") ? "#b91c1c" : "#334155" }}>
+      <div
+        style={{
+          marginBottom: 14,
+          color: message.startsWith("Generation failed") ? "#b91c1c" : "#334155",
+        }}
+      >
         {message || "Choose a PNG/JPG. You should see a filename and preview below."}
       </div>
 
@@ -225,6 +236,7 @@ export default function KidsPosterMVP() {
             }}
           >
             {file ? (
+              // <Image /> is recommended, but <img> is fine for MVP
               <img
                 src={URL.createObjectURL(file)}
                 alt="original"
